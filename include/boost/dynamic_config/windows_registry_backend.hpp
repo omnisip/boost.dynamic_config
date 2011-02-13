@@ -340,8 +340,8 @@ bool windows_registry_backend::select( string_type const & key, T & value, typen
 	string_type strvalue;
 	if (select(key,strvalue))
 	{
-		std::cout << "Converting using boost::lexical_cast, from: " << typeid(string_type).name() << " to: " << typeid(T).name() << std::endl;
-		std::cout << "String value for conversion: " << strvalue << std::endl;
+		//std::cout << "Converting using boost::lexical_cast, from: " << typeid(string_type).name() << " to: " << typeid(T).name() << std::endl;
+		//std::cout << "String value for conversion: " << strvalue << std::endl;
 		value = boost::lexical_cast<T>(strvalue);
 		return true;
 	}
@@ -364,8 +364,7 @@ inline bool windows_registry_backend::select( string_type const & key, string_ty
 		}
 		else
 		{
-			value.clear();
-			value.insert(value.end(),&queryVal[0], &queryVal[0] + dataLen);
+			value = string_type(&queryVal[0], &queryVal[0] + dataLen-1);
 			return true;
 		}
 	} else if (retVal == ERROR_FILE_NOT_FOUND) {
@@ -456,7 +455,7 @@ bool windows_registry_backend::set_registry_key_value( registry_guard const & rg
 
 inline bool windows_registry_backend::set_registry_key_value(registry_guard const & rguard, string_type const & key, string_type const & value )
 {
-	return RegSetValueEx(rguard.hkey(),key.c_str(),NULL,REG_EXPAND_SZ,(const BYTE*)value.c_str(),value.length()) == ERROR_SUCCESS;
+	return RegSetValueEx(rguard.hkey(),key.c_str(),NULL,REG_EXPAND_SZ,(const BYTE*)value.c_str(),(value.length()+1)*sizeof(string_type::value_type)) == ERROR_SUCCESS;
 }
 
 
