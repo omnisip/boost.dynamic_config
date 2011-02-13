@@ -27,17 +27,257 @@
 
 #ifndef BOOST_DYNAMIC_CONFIG_WINDOWS_REGISTRY_BACKEND_HPP
 #define BOOST_DYNAMIC_CONFIG_WINDOWS_REGISTRY_BACKEND_HPP
-
+#ifdef WIN32
+#include <windows.h>
+#include <string>
+#include <sstream>
+#include <boost/type_traits.hpp>
+#include <boost/utility/enable_if.hpp>
+#include "boost/dynamic_config/backend.hpp"
 namespace boost {
 
 namespace dynamic_config {
 
 class windows_registry_backend
 {
+public:
+#ifdef _UNICODE
+	typedef std::wstring string_type;
+#else
+	typedef std::string string_type;
+#endif
+	typedef typename string_type::size_type size_type;
+
+	windows_registry_backend(string_type const & organizationName, string_type const & applicationName) : organizationName_(organizationName), applicationName_(applicationName)
+	{
+		
+		DWORD  dwDisposition;
+		string_type defaultPath = build_default_path(organizationName_,applicationName_);
+
+		if (RegCreateKeyEx(HKEY_CURRENT_USER, defaultPath.c_str(), 0,
+			NULL, 0, KEY_ALL_ACCESS, NULL,&hkey_, &dwDisposition) != ERROR_SUCCESS)
+		{
+			throw std::runtime_error("Unable to create/open key in registry at path: " + defaultPath);
+		}
+
+	}
+
+	~windows_registry_backend()
+	{
+		RegCloseKey(hkey_);
+	}
+
+
+	size_type erase(string_type const & key);
+	void clear();
+
+	template<typename Value>
+	bool insert(string_type const & key, Value value);
+
+	template<typename Value>
+	bool update(string_type const & key, Value value);
+
+	template<typename Value>
+	backend::operation_performed replace(string_type const & key, Value value);
+	
+	template<typename Integral>
+	bool select(string_type const & key, Integral & value, typename enable_if<is_integral<Integral> >::type* dummy = 0);
+	bool select(string_type const & key, string_type & value);
+
+	bool remove(string_type const & key);
+
+
+private:
+	static string_type build_default_path(string_type const & orgName, string_type const & appName)
+	{
+#ifdef _UNICODE
+		std::wstringstream ss;
+#else
+		std::stringstream ss;
+#endif
+		ss << "Software\\" <<  orgName << '\\' << appName;
+		return ss.str();
+	}
+
+	bool check_exists(string_type const & key);
+	string_type error_message(DWORD errorCode);
+	
+	template<typename Integral>
+	bool set_registry_key_value(string_type const & key, Value value, typename enable_if<is_integral<Integral> >::type* dummy = 0);
+	bool set_registry_key_value(string_type const & key, string_type const & value);
+
+
+	string_type organizationName_;
+	string_type applicationName_;
+	HKEY   hkey_;
 };
 
+
+inline size_type windows_registry_backend::erase( string_type const & key )
+{
+	return remove(key);
 }
+
+inline void windows_registry_backend::clear()
+{
+	if (RegDeleteTree(hkey_,NULL) != ERROR_SUCCESS)
+	{
+		throw std::runtime_error("Unable to clear registry key entries.")
+	}
+}
+
+
+template<typename Value>
+bool windows_registry_backend::insert( string_type const & key, Value value)
+{
+	if (!check_exists(key))
+	{
+		return set_registry_key_value(key,value);
+	}
+
+	return false;
+}
+
+template<typename Value>
+bool windows_registry_backend::update( string_type const & key, Value value )
+{
+	if (check_exists(key))
+	{
+		return set_registry_key_value(key,value);
+	}
+
+	return false;
+}
+
+template<typename Value>
+backend::operation_performed windows_registry_backend::replace( string_type const & key, Value value )
+{
+	return set_registry_key_value(key,value);
+}
+
+template<typename Integral>
+bool windows_registry_backend::select( string_type const & key, Integral & value, typename enable_if<is_integral<Integral> >::type* dummy /*= 0*/ )
+{
+	LONG retVal;
+	DWORD valueType;
+	QWORD queryVal;
+	DWORD dataLen = sizeof(queryVal);
+	if ((retVal = RegQueryValueEx(hkey_,key.c_str(),NULL,&valueType,(LPBYTE)(&queryVal),&dataLen)) == ERROR_SUCCESS)
+	{
+		if (valueType != REG_DWORD && valueType != REG_QWORD)
+		{
+			throw std::runtime_error("Invalid key-value type of integer");
+		}
+		else
+		{
+			value = (Integral)queryVal;
+			return true;
+		}
+	} else if (retVal == ERROR_FILE_NOT_FOUND) {
+		return false;
+	} else {
+		throw std::runtime_error(error_message(GetLastError()));
+	}
+}
+
+inline bool windows_registry_backend::select( string_type const & key, string_type & value )
+{
+	LONG retVal;
+	DWORD valueType;
+	BYTE queryVal[4096];
+	DWORD dataLen = sizeof(queryVal);
+	if ((retVal = RegQueryValueEx(hkey_,key.c_str(),NULL,&valueType,(LPBYTE)(&queryVal),&dataLen)) == ERROR_SUCCESS)
+	{
+		if (valueType != REG_EXPAND_SZ && valueType != REG_SZ)
+		{
+			throw std::runtime_error("Invalid key-value type of string");
+		}
+		else
+		{
+			value.clear();
+			value.insert(value.end(),&queryVal[0], &queryVal[0] + dataLen);
+			return true;
+		}
+	} else if (retVal == ERROR_FILE_NOT_FOUND) {
+		return false;
+	} else {
+		throw std::runtime_error(error_message(GetLastError()));
+	}
+}
+
+inline bool windows_registry_backend::remove( string_type const & key )
+{
+	return RegDeleteValue(hkey_,key.c_str()) == ERROR_SUCCESS;
+}
+
+
+
+
+inline bool windows_registry_backend::check_exists( string_type const & key )
+{
+	LPCTSTR lpValueName = key.c_str();
+	LONG retVal = 0;
+	if ((retVal = RegQueryValueEx(hkey_,lpValueName,NULL,NULL,NULL,NULL)) == ERROR_SUCCESS)
+	{
+		return true;
+	}
+	else if (retVal == ERROR_FILE_NOT_FOUND)
+	{
+		return false;
+	}
+	else
+	{
+		throw std::runtime_error(error_message(GetLastError()));
+	}
+}
+
+inline string_type windows_registry_backend::error_message( DWORD dw )
+{
+		// Retrieve the system error message for the last-error code
+		LPVOID lpMsgBuf;
+		LPVOID lpDisplayBuf;
+
+		FormatMessage(
+			FORMAT_MESSAGE_ALLOCATE_BUFFER | 
+			FORMAT_MESSAGE_FROM_SYSTEM |
+			FORMAT_MESSAGE_IGNORE_INSERTS,
+			NULL,
+			dw,
+			MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+			(LPTSTR) &lpMsgBuf,
+			0, NULL );
+
+
+		string_type s((string_type::value_type*)lpMsgBuf);
+		LocalFree(lpMsgBuf);
+		return s;
+}
+
+
+template<typename Integral>
+bool windows_registry_backend::set_registry_key_value( string_type const & key, Value value, typename enable_if<is_integral<Integral> >::type* dummy /*= 0*/ )
+{
+	if (std::numeric_limits<Integral>::digits < 32)
+	{
+		DWORD dwData = value;
+		return RegSetValueEx(hkey_,key.c_str(),NULL,REG_DWORD,(const BYTE*)(&dwData), sizeof(dwData)) == ERROR_SUCCESS;
+	}
+	else // 64 bits of precision
+	{
+		QWORD qwData = value;
+		return RegSetValueEx(hkey_,key.c_str(),NULL,REG_QWORD,(const BYTE*)(&qwData), sizeof(qwData)) == ERROR_SUCCESS;
+	}
+}
+
+inline bool windows_registry_backend::set_registry_key_value( string_type const & key, string_type const & value )
+{
+	return RegSetValueEx(hkey_,key.c_str(),NULL,REG_EXPAND_SZ,(const BYTE*)value.c_str(),value.length()) == ERROR_SUCCESS;
+}
+
+
 
 }
 
+}
+#endif
 #endif // BOOST_DYNAMIC_CONFIG_WINDOWS_REGISTRY_BACKEND_HPP
