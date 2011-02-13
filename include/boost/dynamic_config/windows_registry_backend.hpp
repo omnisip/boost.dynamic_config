@@ -38,6 +38,7 @@
 #include <boost/utility/enable_if.hpp>
 #include "boost/dynamic_config/backend.hpp"
 #include "boost/noncopyable.hpp"
+#include <boost/lexical_cast.hpp>
 namespace boost {
 
 namespace dynamic_config {
@@ -77,6 +78,8 @@ public:
 	
 	template<typename Integral>
 	bool select(string_type const & key, Integral & value, typename enable_if<is_integral<Integral> >::type* dummy = 0);
+	template<typename T>
+	bool select(string_type const & key, T & value, typename disable_if<is_integral<T> >::type* dummy = 0);
 	bool select(string_type const & key, string_type & value);
 
 	bool remove(string_type const & key);
@@ -104,12 +107,18 @@ private:
 	
 	template<typename Integral>
 	static bool set_registry_key_value(registry_guard const & rguard, string_type const & key, Integral value, typename enable_if<is_integral<Integral> >::type* dummy = 0);
+	template<typename T>
+	static bool set_registry_key_value(registry_guard const & rguard, string_type const & key, T value, typename disable_if<is_integral<T> >::type* dummy = 0);
 	static bool set_registry_key_value(registry_guard const & rguard, string_type const & key, string_type const & value);
 
 
 	string_type organizationName_;
 	string_type applicationName_;
 };
+
+
+
+
 
 
 //*************************************************************
@@ -325,6 +334,21 @@ bool windows_registry_backend::select( string_type const & key, Integral & value
 	}
 }
 
+template<typename T>
+bool windows_registry_backend::select( string_type const & key, T & value, typename disable_if<is_integral<T> >::type* dummy /*= 0*/ )
+{
+	string_type strvalue;
+	if (select(key,strvalue))
+	{
+		std::cout << "Converting using boost::lexical_cast, from: " << typeid(string_type).name() << " to: " << typeid(T).name() << std::endl;
+		std::cout << "String value for conversion: " << strvalue << std::endl;
+		value = boost::lexical_cast<T>(strvalue);
+		return true;
+	}
+
+	return false;
+}
+
 inline bool windows_registry_backend::select( string_type const & key, string_type & value )
 {
 	registry_guard rg(organizationName_,applicationName_);
@@ -422,6 +446,12 @@ bool windows_registry_backend::set_registry_key_value(registry_guard const & rgu
 		QWORD qwData = value;
 		return RegSetValueEx(rguard.hkey(),key.c_str(),NULL,REG_QWORD,(const BYTE*)(&qwData), sizeof(qwData)) == ERROR_SUCCESS;
 	}
+}
+
+template<typename T>
+bool windows_registry_backend::set_registry_key_value( registry_guard const & rguard, string_type const & key, T value, typename disable_if<is_integral<T> >::type* dummy /*= 0*/ )
+{
+	return set_registry_key_value(rguard, key, boost::lexical_cast<string_type>(value));
 }
 
 inline bool windows_registry_backend::set_registry_key_value(registry_guard const & rguard, string_type const & key, string_type const & value )

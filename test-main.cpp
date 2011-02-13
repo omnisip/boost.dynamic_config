@@ -1,9 +1,11 @@
 #include "boost/dynamic_config/map_backend.hpp"
 #include "boost/dynamic_config/property_config.hpp"
 #include <boost/detail/lightweight_mutex.hpp>
+#include <boost/exception/diagnostic_information.hpp>
 #ifdef WIN32
 #include "boost/dynamic_config/windows_registry_backend.hpp"
 #endif
+#include <iostream>
 using namespace boost::dynamic_config;
 
 #ifdef WIN32
@@ -29,14 +31,30 @@ int main(int argc, char * argv[])
   assert(mpc.replace("foobar",7));
   
 #ifdef WIN32
+
+
   windows_registry_property_config wrpc(TEXT("Boost"),TEXT("Dynamic Config"));
-  assert(wrpc.insert(std::string("foobar"), 1));
-  assert(wrpc.update("foobar", 4));
-  assert(wrpc.select("foobar",val));
-  assert(val == 4);
-  assert(wrpc.remove("foobar"));
-  assert(!wrpc.erase("foobar"));
-  assert(wrpc.replace("foobar",7) == backend::insert);
   wrpc.clear();
+  assert(wrpc.insert(TEXT("foobar"), 1));
+  assert(wrpc.update(TEXT("foobar"), 4));
+  assert(wrpc.select(TEXT("foobar"),val));
+  assert(val == 4);
+  assert(wrpc.remove(TEXT("foobar")));
+  assert(!wrpc.erase(TEXT("foobar")));
+  assert(wrpc.replace(TEXT("foobar"),7) == backend::insert);
+  assert(wrpc.replace(TEXT("foobar"), TEXT("blah")));
+  assert(wrpc.insert(TEXT("double"), double(4.5)));
+  double dVal;
+  try {
+  assert(wrpc.select(TEXT("double"),dVal));
+  }
+  catch (boost::exception & e)
+  {
+	  std::cout << boost::diagnostic_information(e) << std::endl;
+	  throw;
+  }
+  std::cout << "Double value: " << dVal << std::endl;
+  assert(wrpc.replace(TEXT("int"), 4) == backend::insert);
+  //wrpc.clear();
 #endif
 }
