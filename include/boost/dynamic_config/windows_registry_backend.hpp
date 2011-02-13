@@ -29,42 +29,37 @@
 #define BOOST_DYNAMIC_CONFIG_WINDOWS_REGISTRY_BACKEND_HPP
 #ifdef WIN32
 #include <windows.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <strsafe.h>
 #include <string>
 #include <sstream>
 #include <boost/type_traits.hpp>
 #include <boost/utility/enable_if.hpp>
 #include "boost/dynamic_config/backend.hpp"
+#include "boost/noncopyable.hpp"
 namespace boost {
 
 namespace dynamic_config {
 
 class windows_registry_backend
 {
+
+
 public:
 #ifdef _UNICODE
 	typedef std::wstring string_type;
 #else
 	typedef std::string string_type;
 #endif
-	typedef typename string_type::size_type size_type;
+	typedef string_type::size_type size_type;
 
 	windows_registry_backend(string_type const & organizationName, string_type const & applicationName) : organizationName_(organizationName), applicationName_(applicationName)
-	{
-		
-		DWORD  dwDisposition;
-		string_type defaultPath = build_default_path(organizationName_,applicationName_);
-
-		if (RegCreateKeyEx(HKEY_CURRENT_USER, defaultPath.c_str(), 0,
-			NULL, 0, KEY_ALL_ACCESS, NULL,&hkey_, &dwDisposition) != ERROR_SUCCESS)
-		{
-			throw std::runtime_error("Unable to create/open key in registry at path: " + defaultPath);
-		}
-
+	{	
 	}
 
 	~windows_registry_backend()
 	{
-		RegCloseKey(hkey_);
 	}
 
 
@@ -88,51 +83,186 @@ public:
 
 
 private:
-	static string_type build_default_path(string_type const & orgName, string_type const & appName)
-	{
-#ifdef _UNICODE
-		std::wstringstream ss;
-#else
-		std::stringstream ss;
-#endif
-		ss << "Software\\" <<  orgName << '\\' << appName;
-		return ss.str();
-	}
+	typedef unsigned __int64 QWORD; 
 
-	bool check_exists(string_type const & key);
-	string_type error_message(DWORD errorCode);
+
+	class registry_guard : boost::noncopyable {
+	public:
+		registry_guard(string_type const & organizationName, string_type const & applicationName);
+		HKEY hkey() const;
+		~registry_guard();
+	private:
+
+
+		string_type const & organizationName_;
+		string_type const & applicationName_;
+		HKEY   hkey_;
+	};
+	static string_type build_default_path(string_type const & orgName, string_type const & appName);
+	static bool check_exists(registry_guard const & rguard, string_type const & key);
+	static string_type error_message(DWORD errorCode);
 	
 	template<typename Integral>
-	bool set_registry_key_value(string_type const & key, Value value, typename enable_if<is_integral<Integral> >::type* dummy = 0);
-	bool set_registry_key_value(string_type const & key, string_type const & value);
+	static bool set_registry_key_value(registry_guard const & rguard, string_type const & key, Integral value, typename enable_if<is_integral<Integral> >::type* dummy = 0);
+	static bool set_registry_key_value(registry_guard const & rguard, string_type const & key, string_type const & value);
 
 
 	string_type organizationName_;
 	string_type applicationName_;
-	HKEY   hkey_;
 };
 
 
-inline size_type windows_registry_backend::erase( string_type const & key )
+//*************************************************************
+//
+//  RegDelnodeRecurse()
+//
+//  Purpose:    Deletes a registry key and all its subkeys / values.
+//
+//  Parameters: hKeyRoot    -   Root key
+//              lpSubKey    -   SubKey to delete
+//
+//  Return:     TRUE if successful.
+//              FALSE if an error occurs.
+//
+//*************************************************************
+
+
+inline BOOL RegDelnodeRecurse (HKEY hKeyRoot, LPTSTR lpSubKey)
+{
+    LPTSTR lpEnd;
+    LONG lResult;
+    DWORD dwSize;
+    TCHAR szName[MAX_PATH];
+    HKEY hKey;
+    FILETIME ftWrite;
+
+    // First, see if we can delete the key without having
+    // to recurse.
+
+    lResult = RegDeleteKey(hKeyRoot, lpSubKey);
+
+    if (lResult == ERROR_SUCCESS) 
+        return TRUE;
+
+    lResult = RegOpenKeyEx (hKeyRoot, lpSubKey, 0, KEY_READ, &hKey);
+
+    if (lResult != ERROR_SUCCESS) 
+    {
+        if (lResult == ERROR_FILE_NOT_FOUND) {
+            printf("Key not found.\n");
+            return TRUE;
+        } 
+        else {
+            printf("Error opening key.\n");
+            return FALSE;
+        }
+    }
+
+    // Check for an ending slash and add one if it is missing.
+
+    lpEnd = lpSubKey + lstrlen(lpSubKey);
+
+    if (*(lpEnd - 1) != TEXT('\\')) 
+    {
+        *lpEnd =  TEXT('\\');
+        lpEnd++;
+        *lpEnd =  TEXT('\0');
+    }
+
+    // Enumerate the keys
+
+    dwSize = MAX_PATH;
+    lResult = RegEnumKeyEx(hKey, 0, szName, &dwSize, NULL,
+                           NULL, NULL, &ftWrite);
+
+    if (lResult == ERROR_SUCCESS) 
+    {
+        do {
+
+            StringCchCopy (lpEnd, MAX_PATH*2, szName);
+
+            if (!RegDelnodeRecurse(hKeyRoot, lpSubKey)) {
+                break;
+            }
+
+            dwSize = MAX_PATH;
+
+            lResult = RegEnumKeyEx(hKey, 0, szName, &dwSize, NULL,
+                                   NULL, NULL, &ftWrite);
+
+        } while (lResult == ERROR_SUCCESS);
+    }
+
+    lpEnd--;
+    *lpEnd = TEXT('\0');
+
+    RegCloseKey (hKey);
+
+    // Try again to delete the key.
+
+    lResult = RegDeleteKey(hKeyRoot, lpSubKey);
+
+    if (lResult == ERROR_SUCCESS) 
+        return TRUE;
+
+    return FALSE;
+}
+
+inline BOOL RegDelnode (HKEY hKeyRoot, LPCTSTR lpSubKey)
+{
+	TCHAR szDelKey[MAX_PATH*2];
+
+	StringCchCopy (szDelKey, MAX_PATH*2, lpSubKey);
+	return RegDelnodeRecurse(hKeyRoot, szDelKey);
+}
+
+
+
+inline windows_registry_backend::registry_guard::registry_guard( string_type const & organizationName, string_type const & applicationName )
+	: organizationName_(organizationName), applicationName_(applicationName)
+{
+	DWORD  dwDisposition;
+	string_type defaultPath = build_default_path(organizationName_,applicationName_);
+
+	if (RegCreateKeyEx(HKEY_CURRENT_USER, defaultPath.c_str(), 0,
+		NULL, 0, KEY_ALL_ACCESS, NULL,&hkey_, &dwDisposition) != ERROR_SUCCESS)
+	{
+		throw std::runtime_error("Unable to create/open key in registry at path: " + defaultPath);
+	}
+}
+
+inline HKEY windows_registry_backend::registry_guard::hkey() const
+{
+	return hkey_;
+}
+
+inline windows_registry_backend::registry_guard::~registry_guard()
+{
+	RegCloseKey(hkey_);
+}
+
+
+
+
+inline windows_registry_backend::size_type windows_registry_backend::erase( windows_registry_backend::string_type const & key )
 {
 	return remove(key);
 }
 
 inline void windows_registry_backend::clear()
 {
-	if (RegDeleteTree(hkey_,NULL) != ERROR_SUCCESS)
-	{
-		throw std::runtime_error("Unable to clear registry key entries.")
-	}
+	string_type defaultPath = build_default_path(organizationName_,applicationName_);
+	RegDelnode(HKEY_CURRENT_USER,defaultPath.c_str());
 }
 
 
 template<typename Value>
 bool windows_registry_backend::insert( string_type const & key, Value value)
 {
-	if (!check_exists(key))
+	registry_guard rg(organizationName_,applicationName_);
+	if (!check_exists(rg,key))
 	{
-		return set_registry_key_value(key,value);
+		return set_registry_key_value(rg,key,value);
 	}
 
 	return false;
@@ -141,9 +271,10 @@ bool windows_registry_backend::insert( string_type const & key, Value value)
 template<typename Value>
 bool windows_registry_backend::update( string_type const & key, Value value )
 {
-	if (check_exists(key))
+	registry_guard rg(organizationName_,applicationName_);
+	if (check_exists(rg,key))
 	{
-		return set_registry_key_value(key,value);
+		return set_registry_key_value(rg,key,value);
 	}
 
 	return false;
@@ -152,17 +283,31 @@ bool windows_registry_backend::update( string_type const & key, Value value )
 template<typename Value>
 backend::operation_performed windows_registry_backend::replace( string_type const & key, Value value )
 {
-	return set_registry_key_value(key,value);
+	// open the registry guard just so to make sure that no delete operation can occur while insert and update are performing.
+	registry_guard rg(organizationName_,applicationName_);
+	if (insert(key,value))
+	{
+		return backend::insert;
+	} 
+	else if (update(key,value))
+	{
+		return backend::update;
+	}
+	else
+	{
+		return backend::none;
+	}
 }
 
 template<typename Integral>
 bool windows_registry_backend::select( string_type const & key, Integral & value, typename enable_if<is_integral<Integral> >::type* dummy /*= 0*/ )
 {
+	registry_guard rg(organizationName_,applicationName_);
 	LONG retVal;
 	DWORD valueType;
 	QWORD queryVal;
 	DWORD dataLen = sizeof(queryVal);
-	if ((retVal = RegQueryValueEx(hkey_,key.c_str(),NULL,&valueType,(LPBYTE)(&queryVal),&dataLen)) == ERROR_SUCCESS)
+	if ((retVal = RegQueryValueEx(rg.hkey(),key.c_str(),NULL,&valueType,(LPBYTE)(&queryVal),&dataLen)) == ERROR_SUCCESS)
 	{
 		if (valueType != REG_DWORD && valueType != REG_QWORD)
 		{
@@ -182,11 +327,12 @@ bool windows_registry_backend::select( string_type const & key, Integral & value
 
 inline bool windows_registry_backend::select( string_type const & key, string_type & value )
 {
+	registry_guard rg(organizationName_,applicationName_);
 	LONG retVal;
 	DWORD valueType;
 	BYTE queryVal[4096];
 	DWORD dataLen = sizeof(queryVal);
-	if ((retVal = RegQueryValueEx(hkey_,key.c_str(),NULL,&valueType,(LPBYTE)(&queryVal),&dataLen)) == ERROR_SUCCESS)
+	if ((retVal = RegQueryValueEx(rg.hkey(),key.c_str(),NULL,&valueType,(LPBYTE)(&queryVal),&dataLen)) == ERROR_SUCCESS)
 	{
 		if (valueType != REG_EXPAND_SZ && valueType != REG_SZ)
 		{
@@ -207,17 +353,27 @@ inline bool windows_registry_backend::select( string_type const & key, string_ty
 
 inline bool windows_registry_backend::remove( string_type const & key )
 {
-	return RegDeleteValue(hkey_,key.c_str()) == ERROR_SUCCESS;
+	registry_guard rg(organizationName_,applicationName_);
+	return RegDeleteValue(rg.hkey(),key.c_str()) == ERROR_SUCCESS;
 }
 
 
+inline windows_registry_backend::string_type windows_registry_backend::build_default_path( string_type const & orgName, string_type const & appName )
+{
+#ifdef _UNICODE
+	std::wstringstream ss;
+#else
+	std::stringstream ss;
+#endif
+	ss << "Software\\" <<  orgName << '\\' << appName;
+	return ss.str();
+}
 
-
-inline bool windows_registry_backend::check_exists( string_type const & key )
+inline bool windows_registry_backend::check_exists( registry_guard const & rguard, string_type const & key )
 {
 	LPCTSTR lpValueName = key.c_str();
 	LONG retVal = 0;
-	if ((retVal = RegQueryValueEx(hkey_,lpValueName,NULL,NULL,NULL,NULL)) == ERROR_SUCCESS)
+	if ((retVal = RegQueryValueEx(rguard.hkey(),lpValueName,NULL,NULL,NULL,NULL)) == ERROR_SUCCESS)
 	{
 		return true;
 	}
@@ -231,11 +387,10 @@ inline bool windows_registry_backend::check_exists( string_type const & key )
 	}
 }
 
-inline string_type windows_registry_backend::error_message( DWORD dw )
+inline windows_registry_backend::string_type windows_registry_backend::error_message( DWORD dw )
 {
 		// Retrieve the system error message for the last-error code
 		LPVOID lpMsgBuf;
-		LPVOID lpDisplayBuf;
 
 		FormatMessage(
 			FORMAT_MESSAGE_ALLOCATE_BUFFER | 
@@ -255,24 +410,26 @@ inline string_type windows_registry_backend::error_message( DWORD dw )
 
 
 template<typename Integral>
-bool windows_registry_backend::set_registry_key_value( string_type const & key, Value value, typename enable_if<is_integral<Integral> >::type* dummy /*= 0*/ )
+bool windows_registry_backend::set_registry_key_value(registry_guard const & rguard, string_type const & key, Integral value, typename enable_if<is_integral<Integral> >::type* dummy /*= 0*/ )
 {
-	if (std::numeric_limits<Integral>::digits < 32)
+	if (std::numeric_limits<Integral>::digits <= 32)
 	{
 		DWORD dwData = value;
-		return RegSetValueEx(hkey_,key.c_str(),NULL,REG_DWORD,(const BYTE*)(&dwData), sizeof(dwData)) == ERROR_SUCCESS;
+		return RegSetValueEx(rguard.hkey(),key.c_str(),NULL,REG_DWORD,(const BYTE*)(&dwData), sizeof(dwData)) == ERROR_SUCCESS;
 	}
 	else // 64 bits of precision
 	{
 		QWORD qwData = value;
-		return RegSetValueEx(hkey_,key.c_str(),NULL,REG_QWORD,(const BYTE*)(&qwData), sizeof(qwData)) == ERROR_SUCCESS;
+		return RegSetValueEx(rguard.hkey(),key.c_str(),NULL,REG_QWORD,(const BYTE*)(&qwData), sizeof(qwData)) == ERROR_SUCCESS;
 	}
 }
 
-inline bool windows_registry_backend::set_registry_key_value( string_type const & key, string_type const & value )
+inline bool windows_registry_backend::set_registry_key_value(registry_guard const & rguard, string_type const & key, string_type const & value )
 {
-	return RegSetValueEx(hkey_,key.c_str(),NULL,REG_EXPAND_SZ,(const BYTE*)value.c_str(),value.length()) == ERROR_SUCCESS;
+	return RegSetValueEx(rguard.hkey(),key.c_str(),NULL,REG_EXPAND_SZ,(const BYTE*)value.c_str(),value.length()) == ERROR_SUCCESS;
 }
+
+
 
 
 

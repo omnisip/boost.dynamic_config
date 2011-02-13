@@ -10,6 +10,9 @@
 // http://www.boost.org/LICENSE_1_0.txt)
 //
 //
+#ifdef WIN32
+#pragma warning( disable : 4101)
+#endif
 #include <boost/config.hpp>
 #include <boost/detail/workaround.hpp>
 #include <boost/noncopyable.hpp>
