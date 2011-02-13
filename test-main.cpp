@@ -36,6 +36,7 @@ int main(int argc, char * argv[])
   assert(val == 4);
   assert(wrpc.remove("foobar"));
   assert(!wrpc.erase("foobar"));
-  assert(wrpc.replace("foobar",7));
+  assert(wrpc.replace("foobar",7) == backend::insert);
+  wrpc.clear();
 #endif
 }
