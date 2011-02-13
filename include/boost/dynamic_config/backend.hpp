@@ -22,6 +22,7 @@ namespace dynamic_config {
 			insert,
 			update
 		};
+		//static const bool has_builtin_replace = false;
 
 		/*
 		bool insert(basic_string<CharT> key, (int, basic_string<CharT>, bool, int64_t, char) value); // These values may be easily implementable with boost::variant, or separately if enable_if is used.
