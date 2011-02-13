@@ -47,32 +47,32 @@ public:
     }
     
     
-    template<typename T> bool insert(string_type const & key, typename call_traits<T>::param_type value)
+    template<typename T> bool insert(string_type const & key, T const & value)
     {
       scoped_lock lk(mutex_);
       return backend_.insert(key,value);
     }
     
     
-    template<typename T> bool update(string_type const & key, typename call_traits<T>::param_type value)
+    template<typename T> bool update(string_type const & key, T const & value)
     {
       scoped_lock lk(mutex_);
       return backend_.update(key,value);
     }
     
-    template<typename T> backend::operation_performed replace(string_type const & key, typename call_traits<T>::param_type value)
+    template<typename T> backend::operation_performed replace(string_type const & key, T const & value)
     {
       scoped_lock lk(mutex_);
       return backend_.replace(key,value);
     }
     
-    template<typename T> bool select(string_type const & key, typename call_traits<T>::reference value)
+    template<typename T> bool select(string_type const & key, T & value)
     {
       scoped_lock lk(mutex_);
       return backend_.select(key,value);
     }
     
-    template<typename T> bool remove(string_type const & key)
+    bool remove(string_type const & key)
     {
       scoped_lock lk(mutex_);
       return backend_.remove(key);

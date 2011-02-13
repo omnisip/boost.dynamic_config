@@ -53,7 +53,7 @@ public:
     }
 
     template<typename T>
-    bool insert(string_type const & key, typename call_traits<T>::param_type value)
+    bool insert(string_type const & key, T const & value)
     {
       if (map_.find(key) == map_.end())
       {
@@ -63,7 +63,7 @@ public:
       return false;
     }
     
-    template<typename T> bool update(string_type const & key, typename call_traits<T>::param_type value)
+    template<typename T> bool update(string_type const & key, T const & value)
     {
       typename map_type::iterator i = map_.find(key);
       if (i != map_.end())
@@ -75,7 +75,7 @@ public:
       return false;
     }
     
-    template<typename T> backend::operation_performed replace(string_type const & key, typename call_traits<T>::param_type value)
+    template<typename T> backend::operation_performed replace(string_type const & key, T const & value)
     {
       typename map_type::iterator i = map_.find(key);
       if (i == map_.end())
@@ -83,7 +83,7 @@ public:
 	map_[key] = value;
 	return backend::insert;
       }
-      else if (i->second != value)
+      else if (get<T>(i->second) != value)
       {
 	i->second = value;
 	return backend::update;
@@ -94,19 +94,19 @@ public:
       }
     }
     
-    template<typename T> bool select(string_type const & key, typename call_traits<T>::reference value)
+    template<typename T> bool select(string_type const & key, T & value)
     {
       typename map_type::iterator i = map_.find(key);
       if (i != map_.end())
       {
-	value = get<call_traits<T>::value_type>(i->second);
+	value = get<T>(i->second);
 	return true;
       }
       
       return false;
     }
     
-    template<typename T> bool remove(string_type const & key)
+    bool remove(string_type const & key)
     {
       typename map_type::iterator i = map_.find(key);
       if (i != map_.end())
